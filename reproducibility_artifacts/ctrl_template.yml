@@ -1,0 +1,86 @@
+description: Ryu OpenFlow controller deployed with Heat on Chameleon
+heat_template_version: ocata
+parameter_groups:
+- description: Ryu OpenFlow Controller Configuration
+  label: Ryu OpenFlow Controller Configuration
+  parameters: [controller_network_name, controller_port]
+- description: General parameters
+  label: General Configuration
+  parameters: [key_name, reservation_id]
+parameters:
+  controller_network_name:
+    constraints:
+    - {custom_constraint: neutron.network}
+    default: sharednet1
+    description: Name of the network used by the controller. NOT the new OpenFlow
+      netork.
+    label: Controller Node Network
+    type: string
+  controller_port: {default: 6653, description: The port used by the OpenFlow controller.,
+    label: OpenFlow Controller Port, type: string}
+  ip_subnet: {default: 192.168.100.0/24, description: Subnet for the OpenFlow network,
+    label: OpenFlow Network Subnet (cidr), type: string}
+  key_name:
+    constraints:
+    - {custom_constraint: nova.keypair}
+    description: Name of a KeyPair to enable SSH access to the instance
+    label: SSH Key
+    type: string
+  provider:
+    constraints:
+    - allowed_values: [physnet1, exogeni]
+    default: exogeni
+    description: The provider network
+    label: Network Provider
+    type: string
+  reservation_id:
+    constraints:
+    - {custom_constraint: blazar.reservation}
+    description: ID of the Blazar reservation to use for launching instances.
+    label: Reservation
+    type: string
+resources:
+  controller:
+    properties:
+      flavor: baremetal
+      image: CC-CentOS7
+      key_name: {get_param: key_name}
+      name: controller
+      networks:
+      - network: {get_param: controller_network_name}
+      scheduler_hints:
+        reservation: {get_param: reservation_id}
+      user_data:
+        str_replace:
+          params:
+            $ryu_port: {get_param: controller_port}
+          template: "#!/bin/bash\n{\nCHAMELEON_RYU_URL=\"https://github.com/dbhat/ryu.git\"\
+            \nCHAMELEON_RYU_APP=\"simple_switch_13_custom_chameleon.py\"\n\nyum install\
+            \ -y epel-release\nyum install -y python-pip git\npip install ryu\npip\
+            \ install --upgrade pip\n# Remedy some version conflicts\n# These packages\
+            \ are already installed, ryu installation requirements are satisfied,\
+            \ but running the\n# code generates errors with existing versions of six\
+            \ and netaddr. Needs to be updated.\npip install --upgrade six\npip install\
+            \ --upgrade --ignore-installed netaddr\n\nuseradd openflow\nusermod -s\
+            \ /sbin/nologin openflow\n\nRYU_DIR=\"/opt/ryu\"\n\nmkdir ${RYU_DIR} &&\
+            \ mkdir ${RYU_DIR}/repo\n\n# Ryu Application file that is customized for\
+            \ Chameleon use-case\n#https://raw.githubusercontent.com/dbhat/ryu/master/ryu/app/simple_switch_13_custom_chameleon.py\n\
+            git clone ${CHAMELEON_RYU_URL} ${RYU_DIR}/repo\nln -s ${RYU_DIR}/repo/ryu/app/${CHAMELEON_RYU_APP}\
+            \ ${RYU_DIR}/${CHAMELEON_RYU_APP}\n\nchown -R openflow. ${RYU_DIR}\nmkdir\
+            \ /var/run/ryu\nchown openflow. /var/run/ryu\nmkdir /var/log/ryu\nchown\
+            \ openflow. /var/log/ryu\n\n\ncat << EOF > /etc/sysconfig/ryu\nRYU_PID_FILE=\"\
+            /var/run/ryu/ryu-manager.pid\"\nRYU_LOG_FILE=\"/var/log/ryu/ryu-manager.log\"\
+            \nRYU_CONFIG_DIR=\"/opt/ryu/etc\"\nRYU_APP=\"${RYU_DIR}/${CHAMELEON_RYU_APP}\"\
+            \nOFP_TCP_LISTEN_PORT=\"$ryu_port\"\nEOF\n\n\ncat << EOF > /etc/systemd/system/ryu.service\n\
+            [Unit]\nDescription=Ryu Openflow Controller Service\nAfter=network.target\n\
+            \n[Service]\nEnvironmentFile=/etc/sysconfig/ryu\nUser=openflow\nExecStart=/usr/bin/ryu-manager\
+            \ --pid-file \\${RYU_PID_FILE} --ofp-tcp-listen-port \\${OFP_TCP_LISTEN_PORT}\
+            \ --log-file \\${RYU_LOG_FILE} \\${RYU_APP} --app-lists /opt/ryu/repo/ryu/app/ofctl_rest.py\nKillMode=process\nRestart=on-abort\n\
+            \n[Install]\nWantedBy=multi-user.target\nEOF\n\ncat << EOF > /etc/logrotate.d/ryu\n\
+            /var/log/ryu/*.log {\n    rotate 2\n    missingok\n    nocreate\n    sharedscripts\n\
+            \    size 100M\n    compress\n    postrotate\n        /bin/systemctl restart\
+            \ ryu.service 2> /dev/null || true\n    endscript\n}\nEOF\n\n# https://www.freedesktop.org/software/systemd/man/systemd-tmpfiles.html\n\
+            cat << EOF > /usr/lib/tmpfiles.d/ryu.conf\nd /var/run/ryu 0775 root openflow\n\
+            EOF\n\nsystemctl enable ryu\nsystemctl daemon-reload\nsystemctl restart\
+            \ ryu\nsystemctl status ryu\n} > /tmp/boot.log 2>&1\n"
+    type: OS::Nova::Server
