@@ -16,6 +16,11 @@
        LoadModule http2_module modules/mod_http2.so
        Protocols h2 h2c http/1.1
        ```
+    * Tune for TCP
+        ```
+        sudo ethtool -K <interface> rx off tx off sg off tso off ufo off gso off gro off lro off rxvlan off txvlan off rxhash off
+        
+        ```
     * Run
     ```sudo /usr/local/apache2/bin/apachectl start```
    
